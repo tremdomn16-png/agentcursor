@@ -110,6 +110,15 @@ export class DesktopService {
     return ax<AxApp[]>(["apps"]);
   }
 
+  /** App/janela em que o agente está trabalhando (para o live view). */
+  focusInfo(): { pid?: number; name?: string; title?: string } {
+    return {
+      pid: this.currentPid,
+      name: this.view?.app.name,
+      title: this.view?.window.title,
+    };
+  }
+
   async open(app: string): Promise<AxApp> {
     if (this.background) return this.openInBackground(app);
     const before = (await this.apps()).find((a) => a.active)?.pid;

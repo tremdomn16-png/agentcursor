@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 export interface AxApp {
   name: string;
   pid: number;
-  bundleId: string;
+  bundleId?: string;
   active?: boolean;
 }
 

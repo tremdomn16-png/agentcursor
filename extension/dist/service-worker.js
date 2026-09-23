@@ -293,7 +293,7 @@ async function route(cmd) {
       return dataUrl;
     }
   }
-  if (cmd.kind === "hover" || cmd.kind === "ensureVisible") {
+  if (cmd.kind === "hover" || cmd.kind === "ensureVisible" || cmd.kind === "consoleBuffer") {
     return sendToContent(tabId, cmd);
   }
   if (cmd.kind === "evaluate") {

@@ -3,17 +3,112 @@ import { z } from "zod";
 import type { ActionService } from "../action/service";
 import { readOrDiff } from "../util/diff";
 import type { PageElement, PageSnapshot } from "../protocol";
+import type { ConsoleEntry } from "../drivers/driver";
+import type { AgentEventBus } from "./events";
+import type { AgentFocus } from "./focus";
 
-function text(body: string) {
-  return { content: [{ type: "text" as const, text: body }] };
+type ToolContent = Array<
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string }
+>;
+
+function text(body: string): { content: ToolContent } {
+  return { content: [{ type: "text", text: body }] };
+}
+
+function image(dataUrl: string): { type: "image"; data: string; mimeType: string } | null {
+  const m = /^data:(image\/[\w.+-]+);base64,(.*)$/s.exec(dataUrl);
+  if (!m) return null;
+  return { type: "image", data: m[2]!, mimeType: m[1]! };
+}
+
+/** Auto-relatório: console + screenshot anexados após ações que mudam a tela. */
+async function withAutoReport(
+  action: ActionService,
+  result: { content: ToolContent },
+): Promise<{ content: ToolContent }> {
+  if (process.env.AGENTCURSOR_AUTOREPORT === "0") return result;
+  try {
+    await new Promise((r) => setTimeout(r, 250));
+    const entries = await action.consoleBuffer(true).catch(() => [] as ConsoleEntry[]);
+    const errors = entries.filter((e) => e.level === "error" || e.level === "warning");
+    let shot: string | null = null;
+    try {
+      shot = await action.screenshot("jpeg");
+    } catch {
+      shot = null;
+    }
+    const parts: ToolContent = [...result.content];
+    if (errors.length) {
+      const lines = errors
+        .slice(-8)
+        .map((e) => `  [${e.level}] ${e.text}${e.url ? ` (${e.url}${e.line ? `:${e.line}` : ""})` : ""}`)
+        .join("\n");
+      parts.push({
+        type: "text",
+        text: `\n\nAuto-relatório — console (${errors.length} aviso/erro desde última ação):\n${lines}`,
+      });
+    } else {
+      parts.push({ type: "text", text: "\n\nAuto-relatório — console limpo (sem erros)." });
+    }
+    const img = shot ? image(shot) : null;
+    if (img) parts.push(img);
+    return { content: parts };
+  } catch {
+    return result;
+  }
 }
 
 const lastRead = new WeakMap<ActionService, string[]>();
 
-export function registerTools(server: McpServer, action: ActionService): void {
-  server.registerTool(
-    "read_page",
-    {
+function detailOf(args: unknown): string {
+  if (args == null || typeof args !== "object") return "";
+  const a = args as Record<string, unknown>;
+  const bits: string[] = [];
+  for (const k of ["ref", "url", "key", "text", "find", "query", "button", "dy", "function"]) {
+    const v = a[k];
+    if (v == null) continue;
+    const s = String(v);
+    bits.push(`${k}=${s.length > 48 ? s.slice(0, 48) + "…" : s}`);
+  }
+  if (!bits.length && a.x != null) bits.push(`(${a.x},${a.y})`);
+  return bits.join(" ");
+}
+
+/** Registra a tool e alimenta o feed do live view. */
+function tracked<T extends object>(
+  server: McpServer,
+  bus: AgentEventBus | undefined,
+  name: string,
+  schema: T,
+  handler: (args: any) => Promise<any>,
+  focus?: AgentFocus,
+): void {
+  const run = async (args: any) => {
+    const detail = detailOf(args);
+    focus?.note(name, detail);
+    if (!bus) return handler(args);
+    const id = bus.begin(name, detail);
+    try {
+      const out = await handler(args);
+      bus.end(id, true);
+      return out;
+    } catch (e) {
+      bus.end(id, false);
+      throw e;
+    }
+  };
+  if (!bus && !focus) {
+    server.registerTool(name, schema as never, handler as never);
+    return;
+  }
+  server.registerTool(name, schema as never, run as never);
+}
+
+export function registerTools(server: McpServer, action: ActionService, bus?: AgentEventBus, focus?: AgentFocus): void {
+  const tr = (name: string, schema: object, handler: (args: any) => Promise<any>) =>
+    tracked(server, bus, name, schema as never, handler, focus);
+  tr("read_page", {
       description:
         "Read the current page: interactive elements with stable [ref] handles, their roles/names and on-screen rectangles, plus visible text. Call before clicking or typing by ref.",
       inputSchema: {
@@ -31,8 +126,7 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
   );
 
-  server.registerTool(
-    "find",
+  tr("find",
     {
       description:
         "Identification: locate on-screen elements by their visible text or accessible name (shadow-DOM aware), the way a human scans a page. Returns ranked matches with [ref], role, and on-screen rect. Use when you don't already have a ref, then click/move_to/hover by [ref] — or use click_text to do it in one step.",
@@ -48,8 +142,7 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
   );
 
-  server.registerTool(
-    "click_text",
+  tr("click_text",
     {
       description:
         "Identification + interaction in one step: find the element that best matches the given text/label, then human-move the cursor to it and click. Re-reads the page if the element isn't there yet. `nth` picks a later match, `stealth:true` delivers trusted events, `double` double-clicks.",
@@ -62,14 +155,13 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
     async ({ text: query, nth, double, stealth }) => {
       const { matched, point } = await action.clickText(query, { nth, double, stealth });
-      return text(
+      return withAutoReport(action, text(
         `clicked "${matched.name || matched.ref}" [${matched.ref}] at (${point.x.toFixed(0)}, ${point.y.toFixed(0)})`,
-      );
+      ));
     },
   );
 
-  server.registerTool(
-    "move_to",
+  tr("move_to",
     {
       description:
         "Move the cursor to an element ([ref] from read_page) or to absolute viewport x/y along a human-like path. Does not click. stealth:true delivers trusted events via the debugger driver.",
@@ -86,8 +178,7 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
   );
 
-  server.registerTool(
-    "click",
+  tr("click",
     {
       description:
         "Human-like move + click on an element ([ref]) or x/y. Supports button, double-click, and stealth (trusted-event) mode.",
@@ -105,12 +196,11 @@ export function registerTools(server: McpServer, action: ActionService): void {
       const where = args.ref
         ? `'${args.ref}'`
         : `(${p.x.toFixed(0)}, ${p.y.toFixed(0)})`;
-      return text(`clicked ${where}`);
+      return withAutoReport(action, text(`clicked ${where}`));
     },
   );
 
-  server.registerTool(
-    "type",
+  tr("type",
     {
       description:
         "Type text with human key timing. If a ref is given, the input is human-clicked to focus first. stealth:true uses the debugger driver.",
@@ -122,12 +212,11 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
     async (args) => {
       await action.type(args);
-      return text(`typed ${args.text.length} chars`);
+      return withAutoReport(action, text(`typed ${args.text.length} chars`));
     },
   );
 
-  server.registerTool(
-    "press_key",
+  tr("press_key",
     {
       description:
         "Press a single key on the focused element: Enter, Escape, Tab, Backspace, Delete, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space, or a single character. Use to submit (Enter), dismiss dialogs (Escape), or tab between fields. stealth:true delivers a trusted key event via the debugger driver.",
@@ -138,12 +227,11 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
     async ({ key, stealth }) => {
       await action.pressKey(key, stealth);
-      return text(`pressed ${key}`);
+      return withAutoReport(action, text(`pressed ${key}`));
     },
   );
 
-  server.registerTool(
-    "scroll",
+  tr("scroll",
     {
       description: "Scroll the page by dy (and optional dx) pixels in eased human steps.",
       inputSchema: {
@@ -154,30 +242,28 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
     async (args) => {
       await action.scroll(args);
-      return text(`scrolled dy=${args.dy}`);
+      return withAutoReport(action, text(`scrolled dy=${args.dy}`));
     },
   );
 
-  server.registerTool(
-    "navigate",
+  tr("navigate",
     {
       description: "Navigate the active tab to a URL.",
       inputSchema: { url: z.string() },
     },
     async ({ url }) => {
       await action.navigate(url);
-      return text(`navigating to ${url}`);
+      await new Promise((r) => setTimeout(r, 800)); // deixa a página carregar
+      return withAutoReport(action, text(`navigating to ${url}`));
     },
   );
 
-  server.registerTool(
-    "get_url",
+  tr("get_url",
     { description: "Return the active tab's current URL.", inputSchema: {} },
     async () => text(await action.getUrl()),
   );
 
-  server.registerTool(
-    "evaluate",
+  tr("evaluate",
     {
       description:
         "Run a JavaScript function in the active page and return its JSON result. Pass a function source string, e.g. `() => document.title` or `async () => (await fetch('/api/x', { method: 'POST', credentials: 'include' })).status`. Runs in the page realm via CDP, so it uses the page's own cookies/session, awaits promises, and is not blocked by the page CSP. Return value must be JSON-serializable. Use for reads and requests the UI has no button for; the debugger banner shows while it runs.",
@@ -192,8 +278,7 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
   );
 
-  server.registerTool(
-    "wait_for",
+  tr("wait_for",
     {
       description:
         "Wait until an element [ref] appears or some visible text is present (or specific condition), up to timeoutMs (default 10000). Supports condition: 'exists' | 'visible' | 'text'. Use in testing and automation flows for resilience on dynamic sites.",
@@ -210,8 +295,7 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
   );
 
-  server.registerTool(
-    "screenshot",
+  tr("screenshot",
     {
       description:
         "Capture the visible tab as an image, scaled so 1 image pixel = 1 click coordinate. SEE the page, then click(x,y)/move_to(x,y) at coordinates read off the image. This is the vision loop (screenshot -> decide coords -> click -> screenshot) and needs no DOM refs.",
@@ -227,8 +311,7 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
   );
 
-  server.registerTool(
-    "hover",
+  tr("hover",
     {
       description:
         "Human-like move the cursor to an element or coordinates and fire hover events (mouseover, mouseenter). Essential for dropdowns, tooltips, navigation menus, and realistic workflow/testing automation.",
@@ -242,12 +325,11 @@ export function registerTools(server: McpServer, action: ActionService): void {
     async (args) => {
       await action.hover(args);
       const where = args.ref ? `'${args.ref}'` : args.x != null ? `(${args.x},${args.y})` : "current position";
-      return text(`hovered ${where}`);
+      return withAutoReport(action, text(`hovered ${where}`));
     },
   );
 
-  server.registerTool(
-    "status",
+  tr("status",
     {
       description:
         "Return current MCP server status, driver in use (extension or os), whether the browser bridge is connected, and the active tab URL if available. Use for health checks in long-running tests, CI workflows, and agent monitoring.",
@@ -274,8 +356,7 @@ export function registerTools(server: McpServer, action: ActionService): void {
     },
   );
 
-  server.registerTool(
-    "drag",
+  tr("drag",
     {
       description:
         "Perform a human-like drag from one element/ref or coords to another (e.g. for sliders, reordering, canvas drawing). Uses the realistic path engine while holding the mouse button.",
@@ -297,7 +378,44 @@ export function registerTools(server: McpServer, action: ActionService): void {
         (args.button ?? "left") as any,
         args.stealth,
       );
-      return text("dragged");
+      return withAutoReport(action, text("dragged"));
+    },
+  );
+
+  tr("console_buffer",
+    {
+      description:
+        "Read (and optionally clear) the buffered console errors/warnings from the active page since the last read. Use after navigate/click to check for JS errors without opening DevTools.",
+      inputSchema: {
+        clear: z.boolean().optional().describe("clear the buffer after reading (default true)"),
+      },
+    },
+    async ({ clear }) => {
+      const entries = await action.consoleBuffer(clear ?? true);
+      if (!entries.length) return text("console buffer empty (no errors/warnings).");
+      const lines = entries.map((e) => `[${e.level}] ${e.text}${e.url ? ` (${e.url}${e.line ? `:${e.line}` : ""})` : ""}`);
+      return text(lines.join("\n"));
+    },
+  );
+
+  tr("live_view",
+    {
+      description:
+        "Open/close the floating Live View panel on demand. Does NOT auto-start at MCP boot — call action:'on' only when the human asks to watch the agent, 'off' to close it, 'status' to check. Panel is always-on-top, never steals focus, out of Alt+Tab. Shows the window/tab the agent is actually using plus a live action feed.",
+      inputSchema: {
+        action: z.enum(["on", "off", "status"]).describe("on = open panel, off = close, status = check"),
+      },
+    },
+    async ({ action: act }) => {
+      const { toggleLiveView } = await import("../cli/autostart");
+      const port = Number(process.env.AGENTCURSOR_HTTP_PORT ?? 8931);
+      if (act === "status") {
+        const { liveViewPid } = await import("../cli/autostart");
+        const pid = liveViewPid();
+        return text(pid ? `live_view: on (pid ${pid})` : "live_view: off");
+      }
+      const r = await toggleLiveView(port, act === "on");
+      return text(r.on ? `live_view: on (pid ${r.pid})` : "live_view: off");
     },
   );
 

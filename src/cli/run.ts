@@ -94,8 +94,9 @@ function coerce(value: string, type?: string): string | number | boolean {
 }
 
 function usage(tools: ToolInfo[], full: boolean): string {
+  const plat = process.platform === "win32" ? "Windows" : "Mac";
   const lines = [
-    "agentcursor: a visible human cursor for browser tabs and Mac apps.",
+    `agentcursor: a visible human cursor for browser tabs and ${plat} apps.`,
     "",
     "  agentcursor <command> [positional...] [--flag value]",
     "",
@@ -114,7 +115,7 @@ function usage(tools: ToolInfo[], full: boolean): string {
   for (const t of tools.filter((t) => !t.name.startsWith("desktop_"))) lines.push(line(t));
   const desktop = tools.filter((t) => t.name.startsWith("desktop_"));
   if (desktop.length) {
-    lines.push("", "Any Mac app (computer use; read is text, not pixels):");
+    lines.push("", `Any ${plat} app (computer use; read is text, not pixels):`);
     for (const t of desktop) lines.push(line(t));
   }
   lines.push(

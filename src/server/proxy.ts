@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { openSync } from "node:fs";
+import { openSync, readFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -34,6 +35,23 @@ async function until(check: () => Promise<boolean>, timeoutMs: number): Promise<
   return false;
 }
 
+/** Entrada real do CLI — SELF pode apontar para um chunk do tsup, que não serve. */
+function cliEntry(): string {
+  if (SELF.endsWith(".ts")) return SELF;
+  if (basename(SELF) === "index.js") return SELF;
+  const sibling = join(dirname(SELF), "index.js");
+  return sibling.endsWith("index.js") ? sibling : SELF;
+}
+
+function tailLog(port: number, lines = 12): string {
+  try {
+    const raw = readFileSync(logFile(port), "utf8");
+    return raw.split(/\r?\n/).filter(Boolean).slice(-lines).join("\n");
+  } catch {
+    return "(no log)";
+  }
+}
+
 export async function ensureDaemon(port: number): Promise<void> {
   const current = await health(port);
   if (current && current.buildId >= BUILD_ID) return;
@@ -42,13 +60,19 @@ export async function ensureDaemon(port: number): Promise<void> {
     await until(async () => !(await health(port)), 5_000);
   }
   const log = openSync(logFile(port), "a");
-  spawn(process.execPath, [SELF, "serve", "--idle-exit"], {
+  const entry = cliEntry();
+  spawn(process.execPath, [entry, "serve", "--idle-exit"], {
     detached: true,
     stdio: ["ignore", log, log],
     env: process.env,
+    cwd: dirname(entry),
   }).unref();
-  const ready = await until(async () => ((await health(port))?.buildId ?? 0) >= BUILD_ID, 15_000);
-  if (!ready) throw new Error(`agentcursor could not start its local service on port ${port}. Log: ${logFile(port)}`);
+  const ready = await until(async () => ((await health(port))?.buildId ?? 0) >= BUILD_ID, 20_000);
+  if (!ready) {
+    throw new Error(
+      `agentcursor could not start its local service on port ${port}. Entry: ${entry}. Log: ${logFile(port)}\n${tailLog(port)}`,
+    );
+  }
 }
 
 export async function connectClient(port: number): Promise<Client> {

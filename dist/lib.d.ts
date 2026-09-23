@@ -175,6 +175,9 @@ type Command = {
 } | {
     kind: "evaluate";
     expression: string;
+} | {
+    kind: "consoleBuffer";
+    clear?: boolean;
 };
 
 interface ClickArgs {
@@ -243,6 +246,14 @@ interface BrowserDriver {
         scrollIntoView?: boolean;
     }): Promise<LocatorMatch>;
     evaluate(expression: string): Promise<unknown>;
+    consoleBuffer(clear?: boolean): Promise<ConsoleEntry[]>;
+}
+interface ConsoleEntry {
+    level: "error" | "warning" | "log" | "info" | "debug";
+    text: string;
+    source?: string;
+    url?: string;
+    line?: number;
 }
 
 interface Rng {
@@ -414,6 +425,7 @@ declare class ActionService {
         condition?: "exists" | "visible" | "text";
     }): Promise<boolean>;
     screenshot(format?: "png" | "jpeg"): Promise<string>;
+    consoleBuffer(clear?: boolean): Promise<ConsoleEntry[]>;
     hover(opts?: {
         ref?: string;
         x?: number;
@@ -595,7 +607,7 @@ declare class AgentCursor {
 interface AxApp {
     name: string;
     pid: number;
-    bundleId: string;
+    bundleId?: string;
     active?: boolean;
 }
 interface AxWindow {
@@ -686,6 +698,12 @@ declare class DesktopService {
     permissions(): Promise<AxPermissions>;
     requestPermission(kind: "accessibility" | "screen"): Promise<Partial<AxPermissions>>;
     apps(): Promise<AxApp[]>;
+    /** App/janela em que o agente está trabalhando (para o live view). */
+    focusInfo(): {
+        pid?: number;
+        name?: string;
+        title?: string;
+    };
     open(app: string): Promise<AxApp>;
     /** Launch or attach without bringing the app to the front (`open -g`). */
     private openInBackground;
@@ -748,7 +766,7 @@ type DesktopQuery = string | {
     app?: string;
 };
 /**
- * Computer use: drive any Mac app with the real cursor, reading the window as
+ * Computer use: drive any desktop app with the real cursor, reading the window as
  * text from the accessibility tree instead of screenshots. Same engine, persona
  * and reads as the desktop_* MCP tools.
  */
@@ -901,6 +919,7 @@ declare class ExtensionDriver implements BrowserDriver {
         scrollIntoView?: boolean;
     }): Promise<LocatorMatch>;
     evaluate(expression: string): Promise<unknown>;
+    consoleBuffer(clear?: boolean): Promise<ConsoleEntry[]>;
 }
 
 /**
@@ -936,6 +955,7 @@ declare class OsCursorDriver implements BrowserDriver {
         scrollIntoView?: boolean;
     }): Promise<LocatorMatch>;
     evaluate(expression: string): Promise<unknown>;
+    consoleBuffer(clear?: boolean): Promise<ConsoleEntry[]>;
     cursorState(): Promise<Point>;
     move(samples: CursorSample[], _mode: DeliveryMode): Promise<void>;
     click(args: ClickArgs): Promise<void>;

@@ -133,7 +133,8 @@ export type Command =
   | { kind: "waitFor"; ref?: string; text?: string; timeoutMs: number; condition?: "exists" | "visible" | "text" }
   | { kind: "pressKey"; key: string; mode: DeliveryMode }
   | { kind: "resolveLocator"; spec: LocatorSpec; timeoutMs: number; scrollIntoView?: boolean }
-  | { kind: "evaluate"; expression: string };
+  | { kind: "evaluate"; expression: string }
+  | { kind: "consoleBuffer"; clear?: boolean };
 
 /**
  * Wrap a page function and its args into a self-calling expression for

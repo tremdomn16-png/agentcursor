@@ -13,6 +13,7 @@ import type { ExtensionTransport } from "../server/transport";
 import { rand, sleep } from "../util/timing";
 import { screenToViewport, viewportToScreen } from "./coord-map";
 import { loadNut, nutButton, playPath, pressButton, scrollSteps, typeText } from "./nut";
+import type { ConsoleEntry } from "./driver";
 import type {
   BrowserDriver,
   ClickArgs,
@@ -110,6 +111,10 @@ export class OsCursorDriver implements BrowserDriver {
 
   async evaluate(expression: string): Promise<unknown> {
     return this.transport.send({ kind: "evaluate", expression }, 60_000);
+  }
+
+  async consoleBuffer(clear?: boolean): Promise<ConsoleEntry[]> {
+    return (await this.transport.send({ kind: "consoleBuffer", clear }, 10_000)) as ConsoleEntry[];
   }
 
   async cursorState(): Promise<Point> {

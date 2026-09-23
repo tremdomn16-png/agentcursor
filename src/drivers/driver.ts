@@ -67,4 +67,13 @@ export interface BrowserDriver {
   pressKey(key: string, mode: DeliveryMode): Promise<void>;
   resolveLocator(spec: LocatorSpec, opts: { timeoutMs: number; scrollIntoView?: boolean }): Promise<LocatorMatch>;
   evaluate(expression: string): Promise<unknown>;
+  consoleBuffer(clear?: boolean): Promise<ConsoleEntry[]>;
+}
+
+export interface ConsoleEntry {
+  level: "error" | "warning" | "log" | "info" | "debug";
+  text: string;
+  source?: string;
+  url?: string;
+  line?: number;
 }

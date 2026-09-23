@@ -4,8 +4,11 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { desktopSupported } from "../desktop/ax";
 import { clientStatus, connectClient, launchEntry } from "../setup/clients";
 import wizardHtml from "../setup/wizard.html";
+import liveHtml from "./live.html";
+import { liveViewPid, toggleLiveView } from "../cli/autostart";
 import { BUILD_ID, SELF, createMcpServer, logFile, readVersion, type Runtime } from "./create";
 import { isAllowedRequest } from "./guard";
+import type { AgentEvent } from "./events";
 
 export interface Health {
   ok: true;
@@ -33,6 +36,47 @@ export function serve(rt: Runtime, opts: { idleExitMs?: number } = {}): Promise<
         }
         if (path === "/health") return json(res, 200, health());
         if (path === "/api/status") return json(res, 200, await status(rt));
+        if (path === "/api/screenshot") {
+          const frame = await rt.frames.capture(true);
+          if (!frame) {
+            return json(res, 503, {
+              error: "no screenshot source (extension offline and desktop capture failed)",
+              detail: rt.frames.error() || undefined,
+            });
+          }
+          res.writeHead(200, {
+            "content-type": "image/jpeg",
+            "cache-control": "no-store",
+            "content-length": frame.buf.length,
+            "x-agentcursor-source": frame.source,
+            "x-agentcursor-focus": encodeURIComponent(frame.focus),
+          });
+          return res.end(frame.buf);
+        }
+        if (path === "/api/stream") {
+          return await handleMjpeg(rt, res);
+        }
+        if (path === "/api/events") {
+          const since = Number(new URL(req.url ?? "/", "http://127.0.0.1").searchParams.get("since") ?? 0);
+          const stats = rt.events.stats();
+          return json(res, 200, {
+            events: rt.events.list(since),
+            lastId: stats.lastId,
+            activity: stats.activity,
+            focus: {
+              label: rt.focus.label(),
+              ...rt.focus.get(),
+            },
+          });
+        }
+        if (path === "/live") {
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+          return res.end(liveHtml);
+        }
+        if (path === "/api/live") {
+          const on = liveViewPid() !== null;
+          return json(res, 200, { on });
+        }
       }
       if (req.method === "POST") {
         const body = await readBody(req);
@@ -45,6 +89,11 @@ export function serve(rt: Runtime, opts: { idleExitMs?: number } = {}): Promise<
         if (path === "/api/test-cursor") {
           await rt.desktop.wiggle();
           return json(res, 200, { ok: true });
+        }
+        if (path === "/api/live") {
+          const wantOn = body.on !== false && body.action !== "off";
+          const r = await toggleLiveView(port, wantOn);
+          return json(res, 200, r);
         }
         if (path === "/shutdown") {
           json(res, 200, { ok: true });
@@ -95,7 +144,8 @@ function health(): Health {
 }
 
 async function status(rt: Runtime) {
-  const supported = desktopSupported();
+  const isWin = process.platform === "win32";
+  const supported = isWin ? true : desktopSupported();
   const permissions = supported ? await rt.desktop.permissions().catch(() => null) : null;
   return {
     ...health(),
@@ -111,6 +161,7 @@ async function status(rt: Runtime) {
     },
     desktop: {
       supported,
+      platform: isWin ? "windows" : process.platform === "darwin" ? "macos" : "unsupported",
       accessibility: permissions?.accessibility ?? false,
       screenRecording: permissions?.screenRecording ?? false,
     },
@@ -121,6 +172,73 @@ async function status(rt: Runtime) {
 function json(res: ServerResponse, code: number, body: unknown): void {
   res.writeHead(code, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+/** MJPEG contínuo: mesmo hub de frames para todos os clientes do live. */
+async function handleMjpeg(rt: Runtime, res: ServerResponse): Promise<void> {
+  res.writeHead(200, {
+    "content-type": "multipart/x-mixed-replace; boundary=frame",
+    "cache-control": "no-cache, no-store, must-revalidate",
+    pragma: "no-cache",
+    connection: "keep-alive",
+  });
+  rt.frames.noteWatcher(true);
+  let alive = true;
+  const onClose = () => {
+    alive = false;
+    rt.frames.noteWatcher(false);
+    try {
+      res.end();
+    } catch {
+      /* ignore */
+    }
+  };
+  res.on("close", onClose);
+  res.on("error", onClose);
+
+  let frames = 0;
+  let fpsAt = Date.now();
+  let fps = 0;
+  try {
+    while (alive) {
+      const frame = await rt.frames.capture(false);
+      if (!frame || !alive) {
+        await sleep(120);
+        continue;
+      }
+      const head = Buffer.from(
+        `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.buf.length}\r\nX-Agentcursor-Source: ${frame.source}\r\nX-Agentcursor-Focus: ${encodeURIComponent(frame.focus)}\r\n\r\n`,
+      );
+      if (!res.write(head) || !res.write(frame.buf)) {
+        await onceDrain(res);
+        if (!alive) break;
+      }
+      frames++;
+      const now = Date.now();
+      if (now - fpsAt >= 1000) {
+        fps = frames;
+        frames = 0;
+        fpsAt = now;
+      }
+      // ~12–15fps de push; o hub já coalesce capturas
+      const wait = Math.max(20, Math.round(1000 / Math.max(8, fps || 12)) - 8);
+      await sleep(wait);
+    }
+  } catch {
+    onClose();
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function onceDrain(res: ServerResponse): Promise<void> {
+  return new Promise((resolve) => {
+    if (res.writableEnded || res.destroyed) return resolve();
+    res.once("drain", resolve);
+    setTimeout(resolve, 250);
+  });
 }
 
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {

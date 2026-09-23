@@ -480,6 +480,9 @@ var ActionService = class {
   async screenshot(format = "png") {
     return this.driver.screenshot(format);
   }
+  async consoleBuffer(clear) {
+    return this.driver.consoleBuffer(clear);
+  }
   async hover(opts = {}) {
     if (opts.ref || typeof opts.x === "number" && typeof opts.y === "number") {
       await this.moveTo({ ref: opts.ref, x: opts.x, y: opts.y, stealth: opts.stealth });
@@ -697,6 +700,9 @@ var ExtensionDriver = class {
   async evaluate(expression) {
     return this.transport.send({ kind: "evaluate", expression }, ACTION_TIMEOUT_MS);
   }
+  async consoleBuffer(clear) {
+    return await this.transport.send({ kind: "consoleBuffer", clear }, 1e4);
+  }
 };
 
 // src/drivers/coord-map.ts
@@ -913,6 +919,9 @@ var OsCursorDriver = class {
   }
   async evaluate(expression) {
     return this.transport.send({ kind: "evaluate", expression }, 6e4);
+  }
+  async consoleBuffer(clear) {
+    return await this.transport.send({ kind: "consoleBuffer", clear }, 1e4);
   }
   async cursorState() {
     const nut = await loadNut();
@@ -1609,6 +1618,14 @@ var DesktopService = class {
   }
   apps() {
     return ax(["apps"]);
+  }
+  /** App/janela em que o agente está trabalhando (para o live view). */
+  focusInfo() {
+    return {
+      pid: this.currentPid,
+      name: this.view?.app.name,
+      title: this.view?.window.title
+    };
   }
   async open(app) {
     if (this.background) return this.openInBackground(app);

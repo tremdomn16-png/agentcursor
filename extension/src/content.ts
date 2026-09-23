@@ -91,9 +91,26 @@ async function handle(cmd: Command): Promise<unknown> {
     case "pressKey":
       pressKey(cmd.key);
       return null;
+    case "consoleBuffer":
+      return readConsoleBuffer(cmd.clear);
     default:
       throw new Error(`content script cannot handle '${cmd.kind}'`);
   }
+}
+
+type ConsoleEntry = {
+  level: "error" | "warning" | "log" | "info" | "debug";
+  text: string;
+  source?: string;
+  url?: string;
+  line?: number;
+};
+
+function readConsoleBuffer(clear?: boolean): ConsoleEntry[] {
+  const raw = (window as unknown as { __agentcursorConsole?: ConsoleEntry[] }).__agentcursorConsole ?? [];
+  const out = [...raw];
+  if (clear) raw.length = 0;
+  return out;
 }
 
 function cursorState(): Point {

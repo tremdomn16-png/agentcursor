@@ -8,7 +8,7 @@ import type {
   Rect,
 } from "../protocol";
 import { buildEvalExpression } from "../protocol";
-import type { BrowserDriver } from "../drivers/driver";
+import type { BrowserDriver, ConsoleEntry } from "../drivers/driver";
 import {
   generateMove,
   offCenterPoint,
@@ -177,6 +177,10 @@ export class ActionService {
 
   async screenshot(format: "png" | "jpeg" = "png"): Promise<string> {
     return this.driver.screenshot(format);
+  }
+
+  async consoleBuffer(clear?: boolean): Promise<ConsoleEntry[]> {
+    return this.driver.consoleBuffer(clear);
   }
 
   async hover(opts: { ref?: string; x?: number; y?: number; stealth?: boolean } = {}): Promise<void> {

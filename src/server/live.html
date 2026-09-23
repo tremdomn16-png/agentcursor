@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentCursor Live</title>
+<style>
+  :root {
+    --bg: #070708; --panel: #0f0f13; --line: #1e1e26; --text: #f3f3f5;
+    --muted: #8b8b98; --dim: #5a5a66; --ok: #6dffa0; --warn: #ffc857;
+    --err: #ff6b7a; --accent: #7aa2ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font: 13px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    display: grid; grid-template-rows: 44px 1fr auto;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 14px; background: #121216; border-bottom: 1px solid var(--line);
+    letter-spacing: .02em;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; }
+  .pulse {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+    box-shadow: 0 0 10px var(--ok); animation: pulse 1.2s ease-in-out infinite;
+  }
+  .pulse.busy { background: var(--warn); box-shadow: 0 0 12px var(--warn); }
+  @keyframes pulse { 0%,100% { opacity: .45; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.1); } }
+  .meta { color: var(--muted); font-size: 12px; }
+  .pill {
+    border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
+    color: var(--muted); font-size: 11px;
+  }
+  main {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+    min-height: 0;
+  }
+  #stage {
+    background: #050507; display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden; min-height: 240px;
+  }
+  #stage img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  #stage .placeholder {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    color: var(--dim); text-align: center; padding: 24px;
+  }
+  #feed {
+    background: var(--panel); border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  #feed h2 {
+    margin: 0; padding: 10px 12px; font-size: 11px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #list { overflow: auto; padding: 8px; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .ev {
+    border: 1px solid var(--line); background: #0b0b0f; border-radius: 8px;
+    padding: 8px 10px; animation: in .18s ease;
+  }
+  @keyframes in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .ev .row1 { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--dim); }
+  .ev .tool { color: var(--accent); font-weight: 700; }
+  .ev.ok .tool { color: var(--ok); }
+  .ev.err .tool { color: var(--err); }
+  .ev .detail { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  footer {
+    border-top: 1px solid var(--line); background: #0c0c10; color: var(--muted);
+    padding: 8px 14px; display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px;
+  }
+  footer b { color: var(--text); font-weight: 600; }
+  .idle { color: var(--dim); }
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; }
+    #feed { border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="pulse" id="pulse"></span> AgentCursor Live</div>
+    <div class="meta" id="activity">standby</div>
+    <div class="pill" id="src">—</div>
+  </header>
+  <main>
+    <div id="stage">
+      <img id="frame" alt="live" draggable="false">
+      <div class="placeholder" id="ph">conectando ao stream…</div>
+    </div>
+    <aside id="feed">
+      <h2><span>Agent feed</span><span id="count">0</span></h2>
+      <div id="list"></div>
+    </aside>
+  </main>
+  <footer>
+    <span>fps <b id="fps">0</b></span>
+    <span>frames <b id="frames">0</b></span>
+    <span>events <b id="evn">0</b></span>
+    <span>status <b id="st">ok</b></span>
+    <span class="idle">focus-safe · topmost</span>
+  </footer>
+<script>
+(() => {
+  const img = document.getElementById("frame");
+  const ph = document.getElementById("ph");
+  const list = document.getElementById("list");
+  const pulse = document.getElementById("pulse");
+  const activity = document.getElementById("activity");
+  const srcEl = document.getElementById("src");
+  const fpsEl = document.getElementById("fps");
+  const framesEl = document.getElementById("frames");
+  const evnEl = document.getElementById("evn");
+  const countEl = document.getElementById("count");
+  const stEl = document.getElementById("st");
+
+  let lastId = 0;
+  let frameCount = 0;
+  let windowStart = performance.now();
+  let evCount = 0;
+
+  function connectStream() {
+    ph.style.display = "grid";
+    ph.textContent = "conectando ao stream…";
+    img.onload = () => {
+      ph.style.display = "none";
+      frameCount++;
+      const now = performance.now();
+      if (now - windowStart >= 1000) {
+        const fps = Math.round((frameCount * 1000) / (now - windowStart));
+        fpsEl.textContent = String(fps);
+        framesEl.textContent = String(frameCount);
+        windowStart = now;
+        frameCount = 0;
+      }
+    };
+    img.onerror = () => {
+      ph.style.display = "grid";
+      ph.textContent = "stream indisponível — reconectando…";
+      setTimeout(connectStream, 800);
+    };
+    img.src = "/api/stream?t=" + Date.now();
+  }
+
+  function renderEvent(e, prepend) {
+    const el = document.createElement("div");
+    el.className = "ev " + (e.ok ? "ok" : "err");
+    const t = new Date(e.t).toLocaleTimeString();
+    const ms = e.ms != null ? " · " + e.ms + "ms" : "";
+    el.innerHTML =
+      '<div class="row1"><span class="tool"></span><span class="ts"></span></div>' +
+      '<div class="detail"></div>';
+    el.querySelector(".tool").textContent = e.tool;
+    el.querySelector(".ts").textContent = t + ms;
+    el.querySelector(".detail").textContent = e.detail || "";
+    if (prepend && list.firstChild) list.insertBefore(el, list.firstChild);
+    else list.appendChild(el);
+    while (list.children.length > 40) list.removeChild(list.lastChild);
+    evCount++;
+    countEl.textContent = String(list.children.length);
+    evnEl.textContent = String(evCount);
+  }
+
+  async function pollEvents() {
+    try {
+      const r = await fetch("/api/events?since=" + lastId, { cache: "no-store" });
+      if (!r.ok) throw new Error("events " + r.status);
+      const j = await r.json();
+      stEl.textContent = "ok";
+      const events = j.events || [];
+      if (events.length) {
+        for (let i = events.length - 1; i >= 0; i--) renderEvent(events[i], true);
+        lastId = j.lastId || events[events.length - 1].id;
+      } else if (j.lastId) {
+        lastId = Math.max(lastId, j.lastId);
+      }
+      const a = j.activity || {};
+      if (a.running) {
+        pulse.classList.add("busy");
+        activity.textContent = "executando · " + (a.tool || "?");
+      } else {
+        pulse.classList.remove("busy");
+        activity.textContent = a.tool ? "última · " + a.tool : "aguardando o agente";
+      }
+    } catch (e) {
+      stEl.textContent = "reconnecting";
+    }
+    setTimeout(pollEvents, 350);
+  }
+
+  async function pollSource() {
+    try {
+      const r = await fetch("/api/screenshot", { method: "HEAD", cache: "no-store" });
+      srcEl.textContent = r.headers.get("x-agentcursor-source") || "—";
+    } catch {
+      srcEl.textContent = "offline";
+    }
+    setTimeout(pollSource, 3000);
+  }
+
+  connectStream();
+  pollEvents();
+  pollSource();
+})();
+</script>
+</body>
+</html>

@@ -22,7 +22,7 @@ const isRef = (s: string) => /^d\d+$/.test(s);
 const target = (q: DesktopQuery) => (typeof q === "string" ? (isRef(q) ? { ref: q } : { text: q }) : q);
 
 /**
- * Computer use: drive any Mac app with the real cursor, reading the window as
+ * Computer use: drive any desktop app with the real cursor, reading the window as
  * text from the accessibility tree instead of screenshots. Same engine, persona
  * and reads as the desktop_* MCP tools.
  */

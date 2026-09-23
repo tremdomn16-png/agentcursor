@@ -130,8 +130,8 @@ async function route(cmd: Command): Promise<unknown> {
       return dataUrl;
     }
   }
-  if (cmd.kind === "hover" || cmd.kind === "ensureVisible") {
-    // Hover and ensureVisible go via content (for DOM scrollIntoView + events)
+  if (cmd.kind === "hover" || cmd.kind === "ensureVisible" || cmd.kind === "consoleBuffer") {
+    // Hover, ensureVisible and consoleBuffer go via content (for DOM scrollIntoView + events)
     return sendToContent(tabId, cmd);
   }
   if (cmd.kind === "evaluate") {

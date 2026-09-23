@@ -42,4 +42,14 @@ await build({
   define: { "process.env.NODE_ENV": '"production"' },
 });
 
-console.log("built extension/dist/{service-worker,content}.js");
+await build({
+  entryPoints: ["extension/src/console-buffer.ts"],
+  outfile: "extension/dist/console-buffer.js",
+  bundle: true,
+  format: "iife",
+  target: "chrome116",
+  platform: "browser",
+  minify: true,
+});
+
+console.log("built extension/dist/{service-worker,content,console-buffer}.js");

@@ -8,6 +8,7 @@ import type {
   Point,
   Rect,
 } from "../protocol";
+import type { ConsoleEntry } from "./driver";
 import type { ExtensionTransport } from "../server/transport";
 import type {
   BrowserDriver,
@@ -114,5 +115,9 @@ export class ExtensionDriver implements BrowserDriver {
 
   async evaluate(expression: string): Promise<unknown> {
     return this.transport.send({ kind: "evaluate", expression }, ACTION_TIMEOUT_MS);
+  }
+
+  async consoleBuffer(clear?: boolean): Promise<ConsoleEntry[]> {
+    return (await this.transport.send({ kind: "consoleBuffer", clear }, 10_000)) as ConsoleEntry[];
   }
 }
