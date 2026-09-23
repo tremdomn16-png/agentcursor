@@ -1,0 +1,25 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build:server
+      - run: node extension/build.mjs
+      - run: node scripts/release.mjs
+        shell: bash
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: agentcursor-*.zip
+          generate_release_notes: true
+          body_path: CHANGELOG.md

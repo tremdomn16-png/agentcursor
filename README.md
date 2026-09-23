@@ -1,5 +1,7 @@
 # AgentCursor
 
+> **Fork `tremdomn16-png/agentcursor` — Windows + floating Live View inteligente.** Upstream: `kumard3/agentcursor`. Veja `CHANGELOG.md`, `docs/WINDOWS.md`, `docs/LIVE_VIEW.md`.
+
 **Local, free, human-like cursor for AI agents: any Mac app or browser tab, over MCP.**
 
 AgentCursor gives you (and any coding agent or automation script) a **real browser** driven with **visible, convincingly human cursor movement and timing**.
@@ -20,10 +22,12 @@ The major browser automation MCPs often make realistic movement a cloud-only fea
 ## Quick start
 
 ```bash
-git clone https://github.com/kumard3/agentcursor.git
+git clone https://github.com/tremdomn16-png/agentcursor.git
 cd agentcursor && pnpm install && pnpm build
-node dist/index.js setup
+node dist/index.js setup   # Windows: PowerShell 5.1 + Node 20; veja docs/WINDOWS.md
 ```
+
+> **Novidades v0.4.1-win:** Live View on-demand (`live_view on` só quando você pedir), mostra **só a janela que o agente mexe** (stream fluido via `WindowStream`), HTTP `GET /live` + `GET /api/stream` (MJPEG) + `GET /api/events`. Docs: `docs/LIVE_VIEW.md`, `docs/TOOLS.md`.
 
 `setup` starts the local service, lists the AI apps it finds on your machine (Claude Code, Cursor, VS Code, Codex, Windsurf, Claude Desktop, Gemini CLI) and opens a setup page at `http://127.0.0.1:8931`. From there you connect each app with one click, grant the two macOS permissions, load the optional Chrome extension, and press **Test the cursor**. Prefer the terminal? `node dist/index.js setup --all` connects every detected app (or `--client=cursor,codex`).
 

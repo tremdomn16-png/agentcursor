@@ -1,6 +1,6 @@
 {
   "name": "agentcursor",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A visible, human-like cursor for AI agents: drive any Mac app or browser tab over MCP, with text-first reads that save tokens. One setup command connects Claude Code, Cursor, Codex, VS Code, Windsurf, Claude Desktop and Gemini CLI.",
   "type": "module",
   "bin": {
@@ -39,7 +39,8 @@
     "demo": "node scripts/demo-drive.mjs",
     "dev": "tsx src/index.ts",
     "prepublishOnly": "pnpm run build",
-    "build:native": "node scripts/build-native.mjs"
+    "build:native": "node scripts/build-native.mjs",
+    "release": "node scripts/release.mjs"
   },
   "keywords": [
     "mcp",
